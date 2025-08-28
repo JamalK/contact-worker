@@ -72,7 +72,7 @@ export default {
 					},
 				});
 			} catch (err) {
-				return new Response(JSON.stringify({ error: `Invalid JSON ${err}` }), {
+				return new Response(JSON.stringify({ error: `Bad Request` }), {
 					status: 400,
 					headers: { 'Content-Type': 'application/json' },
 				});
