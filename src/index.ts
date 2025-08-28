@@ -11,16 +11,24 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+export interface ContactPayload {
+	name: string;
+	email: string;
+	message: string;
+	token: string; // Turnstile token from frontend
+}
+
 import { env } from 'cloudflare:workers';
 import { WorkerMailer } from 'worker-mailer';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		if (request.method === 'OPTIONS') {
-			// Handle CORS preflight
+			const allowedOrigin = 'https://beroea.tech';
+
 			return new Response(null, {
 				headers: {
-					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Origin': allowedOrigin,
 					'Access-Control-Allow-Methods': 'POST, OPTIONS',
 					'Access-Control-Allow-Headers': 'Content-Type',
 				},
@@ -33,13 +41,44 @@ export default {
 					name?: string;
 					email?: string;
 					message?: string;
+					token?: string;
 				}>();
 
+				// Content validation
 				if (!data.name || !data.email || !data.message) {
-					return new Response(JSON.stringify({ error: 'Missing required fields' }), {
-						status: 400,
-						headers: { 'Content-Type': 'application/json' },
-					});
+					return jsonResponse({ error: 'Missing required fields' }, 400);
+				}
+
+				if (
+					typeof data.name !== 'string' ||
+					typeof data.email !== 'string' ||
+					typeof data.message !== 'string' ||
+					typeof data.token !== 'string'
+				) {
+					return jsonResponse({ error: 'Invalid field types' }, 400);
+				}
+
+				// 2️⃣ Validate content
+				if (data.name.length > 100 || data.message.length > 1000) {
+					return jsonResponse({ error: 'Input too long' }, 400);
+				}
+
+				const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+				if (!emailRegex.test(data.email)) {
+					return jsonResponse({ error: 'Invalid email format' }, 400);
+				}
+
+				const turnstileRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+					method: 'POST',
+					body: new URLSearchParams({
+						secret: env.TURNSTILE_SECRET,
+						response: data.token,
+					}),
+				});
+
+				const outcome = await turnstileRes.json<{ success: boolean }>();
+				if (!outcome.success) {
+					return jsonResponse({ error: 'Turnstile verification failed' }, 403);
 				}
 
 				// Craft the email
@@ -82,3 +121,16 @@ export default {
 		return new Response('Method Not Allowed', { status: 405 });
 	},
 };
+
+// Utility: JSON responses
+function jsonResponse(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { 'Content-Type': 'application/json' },
+	});
+}
+
+export interface Env {
+	TURNSTILE_SECRET: string;
+	pass: string;
+}
